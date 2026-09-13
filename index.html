@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Neon Valorant - Audio Reactive V4</title>
+<style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#080713}
+canvas{display:block;width:100vw;height:100vh}
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<script>
+const canvas=document.getElementById("gl");
+const gl=canvas.getContext("webgl",{alpha:false,antialias:false,premultipliedAlpha:false});
+if(!gl)throw new Error("WebGL unavailable");
+
+const vs=`
+attribute vec2 a_pos;
+attribute vec2 a_uv;
+varying vec2 v_uv;
+void main(){v_uv=a_uv;gl_Position=vec4(a_pos,0.0,1.0);}
+`;
+
+const fs=`
+precision mediump float;
+varying vec2 v_uv;
+uniform sampler2D u_tex;
+uniform float u_hue,u_bass,u_mids,u_highs,u_volume;
+uniform float u_aspect,u_texAspect,u_saturation,u_brightness,u_range;
+
+vec3 rgb2hsv(vec3 c){
+ vec4 K=vec4(0.0,-1.0/3.0,2.0/3.0,-1.0);
+ vec4 p=mix(vec4(c.bg,K.wz),vec4(c.gb,K.xy),step(c.b,c.g));
+ vec4 q=mix(vec4(p.xyw,c.r),vec4(c.r,p.yzx),step(p.x,c.r));
+ float d=q.x-min(q.w,q.y),e=1.0e-10;
+ return vec3(abs(q.z+(q.w-q.y)/(6.0*d+e)),d/(q.x+e),q.x);
+}
+vec3 hsv2rgb(vec3 c){
+ vec3 p=abs(fract(c.xxx+vec3(0.0,1.0/3.0,2.0/3.0))*6.0-3.0);
+ return c.z*mix(vec3(1.0),clamp(p-1.0,0.0,1.0),c.y);
+}
+void main(){
+ float ar=u_aspect,tr=u_texAspect;
+ vec2 uv=v_uv;
+
+ // Correct orientation and cover the display while preserving aspect ratio.
+ if(ar>tr){
+   float visible=tr/ar;
+   uv.y=(uv.y-0.5)*visible+0.5;
+ }else{
+   float visible=ar/tr;
+   uv.x=(uv.x-0.5)*visible+0.5;
+ }
+
+ vec3 original=texture2D(u_tex,uv).rgb;
+ vec3 hsv=rgb2hsv(original);
+
+ // Avoid recoloring near-black background and near-white sword highlights.
+ float chroma=smoothstep(0.025,0.22,hsv.y);
+ float darkProtect=1.0-smoothstep(0.0,0.12,hsv.z);
+ float whiteProtect=smoothstep(0.88,1.0,hsv.z)*(1.0-smoothstep(0.0,0.16,hsv.y));
+ float influence=chroma*(1.0-darkProtect)*(1.0-whiteProtect);
+
+ // Color range: lower values make the hue sweep more restrained.
+ influence*=u_range;
+
+ float hue=fract(hsv.x+u_hue);
+ hsv.y=clamp(hsv.y*u_saturation+u_bass*0.085*influence,0.0,1.0);
+
+ // Gentle musical brightness response.
+ float pulse=1.0+u_bass*0.12+u_volume*0.025;
+ hsv.z=clamp(hsv.z*pulse*u_brightness,0.0,1.0);
+
+ vec3 shifted=hsv2rgb(vec3(hue,hsv.y,hsv.z));
+ vec3 result=mix(original,shifted,influence*0.94);
+
+ // Very restrained high-frequency lift.
+ result*=1.0+u_highs*0.025*influence;
+
+ gl_FragColor=vec4(result,1.0);
+}`;
+
+function makeShader(type,src){
+ const s=gl.createShader(type);
+ gl.shaderSource(s,src);gl.compileShader(s);
+ if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s));
+ return s;
+}
+const program=gl.createProgram();
+gl.attachShader(program,makeShader(gl.VERTEX_SHADER,vs));
+gl.attachShader(program,makeShader(gl.FRAGMENT_SHADER,fs));
+gl.linkProgram(program);
+if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(program));
+gl.useProgram(program);
+
+const pos=gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER,pos);
+gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([
+ -1,-1,1,-1,-1,1,
+ -1,1,1,-1,1,1
+]),gl.STATIC_DRAW);
+const aPos=gl.getAttribLocation(program,"a_pos");
+gl.enableVertexAttribArray(aPos);gl.vertexAttribPointer(aPos,2,gl.FLOAT,false,0,0);
+
+const uvb=gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER,uvb);
+gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([
+ 0,1,1,1,0,0,
+ 0,0,1,1,1,0
+]),gl.STATIC_DRAW);
+const aUv=gl.getAttribLocation(program,"a_uv");
+gl.enableVertexAttribArray(aUv);gl.vertexAttribPointer(aUv,2,gl.FLOAT,false,0,0);
+
+const tex=gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D,tex);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+
+const image=new Image();
+image.src="neon.jpg";
+image.onload=()=>{
+ gl.bindTexture(gl.TEXTURE_2D,tex);
+ gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);
+ gl.texImage2D(gl.TEXTURE_2D,0,gl.RGB,gl.RGB,gl.UNSIGNED_BYTE,image);
+ requestAnimationFrame(render);
+};
+
+const uHue=gl.getUniformLocation(program,"u_hue");
+const uBass=gl.getUniformLocation(program,"u_bass");
+const uMids=gl.getUniformLocation(program,"u_mids");
+const uHighs=gl.getUniformLocation(program,"u_highs");
+const uVolume=gl.getUniformLocation(program,"u_volume");
+const uAspect=gl.getUniformLocation(program,"u_aspect");
+const uTexAspect=gl.getUniformLocation(program,"u_texAspect");
+const uSaturation=gl.getUniformLocation(program,"u_saturation");
+const uBrightness=gl.getUniformLocation(program,"u_brightness");
+const uRange=gl.getUniformLocation(program,"u_range");
+
+let settings={cycleSpeed:30,audioInfluence:35,bassPulse:20,saturation:100,brightness:100,audioSmooth:70,colorRange:100};
+let bass=0,mids=0,highs=0,volume=0;
+let targetBass=0,targetMids=0,targetHighs=0,targetVolume=0;
+let bassBaseline=0, energyBaseline=0, beatPulse=0;
+let last=performance.now(),huePhase=0;
+
+function livelyPropertyListener(name,val){
+ const n=Number(val);if(!Number.isFinite(n))return;
+ if(name==="cycleSpeed")settings.cycleSpeed=Math.max(0,Math.min(100,n));
+ if(name==="audioInfluence")settings.audioInfluence=Math.max(0,Math.min(100,n));
+ if(name==="bassPulse")settings.bassPulse=Math.max(0,Math.min(100,n));
+ if(name==="saturation")settings.saturation=Math.max(50,Math.min(150,n));
+ if(name==="brightness")settings.brightness=Math.max(50,Math.min(150,n));
+ if(name==="audioSmooth")settings.audioSmooth=Math.max(1,Math.min(100,n));
+ if(name==="colorRange")settings.colorRange=Math.max(0,Math.min(100,n));
+}
+
+function avg(a,start,end){
+ let s=0,n=0;
+ for(let i=start;i<end&&i<a.length;i++){s+=a[i];n++;}
+ return n?s/n:0;
+}
+
+function livelyAudioListener(arr){
+ if(!arr||!arr.length)return;
+ targetBass=avg(arr,0,12);
+ targetMids=avg(arr,12,48);
+ targetHighs=avg(arr,48,110);
+ targetVolume=avg(arr,0,128);
+}
+
+function smooth(cur,target,dt,attack,release){
+ const rate = target > cur ? attack : release;
+ return cur+(target-cur)*(1-Math.exp(-rate*dt));
+}
+
+function resize(){
+ const dpr=Math.min(window.devicePixelRatio||1,1.5);
+ const w=Math.floor(innerWidth*dpr),h=Math.floor(innerHeight*dpr);
+ if(canvas.width!==w||canvas.height!==h){
+  canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);
+ }
+}
+addEventListener("resize",resize);
+
+function render(now){
+ resize();
+ const dt=Math.min((now-last)/1000,0.05);last=now;
+
+ const sr=1+(settings.audioSmooth/100)*13;
+
+ // Fast attack / slower release makes kicks and beat hits register clearly.
+ bass=smooth(bass,targetBass,dt,sr*2.8,sr*0.65);
+ mids=smooth(mids,targetMids,dt,sr*2.0,sr*0.60);
+ highs=smooth(highs,targetHighs,dt,sr*1.8,sr*0.60);
+ volume=smooth(volume,targetVolume,dt,sr*2.2,sr*0.65);
+
+ // Track a slow baseline so sudden bass/volume rises can be treated as beats.
+ bassBaseline += (bass-bassBaseline)*(1-Math.exp(-1.7*dt));
+ energyBaseline += (volume-energyBaseline)*(1-Math.exp(-1.2*dt));
+
+ const bassRise=Math.max(0,bass-bassBaseline);
+ const energyRise=Math.max(0,volume-energyBaseline);
+ const beatStrength=Math.max(
+   Math.max(0,(bassRise-0.035)/0.16),
+   Math.max(0,(energyRise-0.025)/0.20)
+ );
+ beatPulse=Math.max(beatPulse*Math.exp(-8.5*dt),Math.min(1,beatStrength*1.45));
+
+ // Loud music continuously speeds the colour movement; a detected beat adds a
+ // short acceleration without ever jumping the hue position.
+ const loudness=volume*0.75+bass*1.15+mids*0.28;
+ const base=0.002+(settings.cycleSpeed/100)*0.045;
+ const musicFactor=settings.audioInfluence/100;
+
+ // Make hue movement itself follow musical intensity.
+ // Quiet sections approach the base speed; energetic sections can move
+ // several times faster, while beat transients add a short burst.
+ const continuousMusic=Math.min(1.0,loudness*1.55);
+ const continuousBoost=continuousMusic*4.5*musicFactor;
+ const beatBoost=beatPulse*6.0*musicFactor;
+ const speed=base*(1.0+continuousBoost+beatBoost);
+
+ huePhase=(huePhase+dt*speed)%1.0;
+
+ gl.useProgram(program);
+ gl.uniform1f(uHue,huePhase);
+ gl.uniform1f(uBass,Math.min(1.8,bass+beatPulse*(settings.bassPulse/16)));
+ gl.uniform1f(uMids,mids);
+ gl.uniform1f(uHighs,highs);
+ gl.uniform1f(uVolume,Math.min(1.6,volume+beatPulse*0.85));
+ gl.uniform1f(uAspect,canvas.width/canvas.height);
+ gl.uniform1f(uTexAspect,image.width/image.height);
+ gl.uniform1f(uSaturation,settings.saturation/100);
+ gl.uniform1f(uBrightness,settings.brightness/100);
+ gl.uniform1f(uRange,settings.colorRange/100);
+ gl.drawArrays(gl.TRIANGLES,0,6);
+
+ requestAnimationFrame(render);
+}
+</script>
+</body>
+</html>
