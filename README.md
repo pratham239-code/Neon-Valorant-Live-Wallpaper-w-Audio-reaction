@@ -48,12 +48,13 @@ https://github.com/rocksdanister/lively
 
 ## Installation
 
-1. Download the latest wallpaper ZIP from the Releases section.
-2. Open Lively Wallpaper.
-3. Import the downloaded ZIP.
-4. Apply the wallpaper.
-5. Right-click the wallpaper and select `Customize`.
-6. Adjust the settings according to your preference.
+1. Go to the [Releases](../../releases) page.
+2. Download the latest `.zip` wallpaper.
+3. Open Lively Wallpaper.
+4. Import the downloaded ZIP.
+5. Apply the wallpaper.
+6. Right-click the wallpaper and select `Customize`.
+7. Adjust the settings according to your preference.
 
 ---
 
